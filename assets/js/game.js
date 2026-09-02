@@ -114,6 +114,7 @@ class BaseScene extends Phaser.Scene {
       const heard = this.add.text(640, 372, `인식된 대사: “${result.transcript || '인식되지 않음'}”`, { ...textStyle, fontSize: 15, color: '#67e8f9', align: 'center', wordWrap: { width: 520 } }).setOrigin(.5);
       const line = this.add.text(640, 410, reaction, { ...textStyle, fontSize: 18, align: 'center', wordWrap: { width: 510 }, lineSpacing: 8 }).setOrigin(.5);
       const next = this.button(640, 468, buttonLabel, () => {
+        voice.prepareStageAudio();
         [blocker, card, grade, score, detail, heard, line, next].forEach((item) => item.destroy());
         resolve();
       }, 190);
@@ -129,7 +130,10 @@ class BaseScene extends Phaser.Scene {
     this.add.text(640, 287, title, { ...textStyle, fontSize: 32, fontStyle: 'bold' }).setOrigin(.5);
     this.add.text(640, 352, `${score}점`, { ...textStyle, fontSize: 56, fontStyle: 'bold' }).setOrigin(.5);
     this.add.text(640, 414, summary, { ...textStyle, fontSize: 16, color: '#cbd5e1', align: 'center', wordWrap: { width: 500 } }).setOrigin(.5);
-    this.button(640, 500, nextScene === 'Summary' ? '최종 결과 보기' : '다음 스테이지', () => this.scene.start(nextScene), 230);
+    this.button(640, 500, nextScene === 'Summary' ? '최종 결과 보기' : '다음 스테이지', () => {
+      if (nextScene !== 'Summary') voice.prepareStageAudio();
+      this.scene.start(nextScene);
+    }, 230);
     return blocker;
   }
 }
@@ -157,7 +161,10 @@ class TitleScene extends BaseScene {
       const bg = this.add.rectangle(x, 447, 360, 210, 0x111827, .94).setStrokeStyle(1, 0xffffff, .11).setInteractive({ useHandCursor: true });
       bg.on('pointerover', () => bg.setStrokeStyle(2, palette.cyan, .8));
       bg.on('pointerout', () => bg.setStrokeStyle(1, 0xffffff, .11));
-      bg.on('pointerdown', () => this.scene.start(scene));
+      bg.on('pointerdown', () => {
+        voice.prepareStageAudio();
+        this.scene.start(scene);
+      });
       this.add.text(x - 145, 370, number, { ...textStyle, fontSize: 16, fontStyle: 'bold', color: '#67e8f9' });
       this.add.text(x - 145, 416, title, { ...textStyle, fontSize: 24, fontStyle: 'bold' });
       this.add.text(x - 145, 459, tag, { ...textStyle, fontSize: 15, color: '#94a3b8' });
@@ -167,8 +174,14 @@ class TitleScene extends BaseScene {
       ? '⚠ index.html을 직접 열지 말고 GitHub Pages 주소로 접속하세요.'
       : '✓ 웹 주소로 실행 중 · 허용한 마이크 권한을 같은 주소에서 다시 사용합니다.';
     this.add.text(640, 612, launchHint, { ...textStyle, fontSize: 14, fontStyle: 'bold', color: location.protocol === 'file:' ? '#fcd34d' : '#86efac' }).setOrigin(.5);
-    this.button(500, 665, '마이크 테스트', () => micTest.open(), 240);
-    this.button(780, 665, '처음부터 플레이', () => this.scene.start('Taxi'), 240);
+    this.button(500, 665, '마이크 테스트', () => {
+      voice.pauseAudioForMicTest();
+      micTest.open();
+    }, 240);
+    this.button(780, 665, '처음부터 플레이', () => {
+      voice.prepareStageAudio();
+      this.scene.start('Taxi');
+    }, 240);
   }
 }
 

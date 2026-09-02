@@ -19,6 +19,11 @@ class MicTestController {
     this.detectedFrames = 0;
     this.streamTrack = null;
     this.trackEndedHandler = null;
+    this.recognitionReady = false;
+    this.preferRecognitionTrack = true;
+    this.recognitionUsesTrack = false;
+    this.recognitionStartFailures = 0;
+    this.connectionFailures = 0;
 
     this.startButton.addEventListener('click', () => this.toggle());
     this.closeButtons.forEach((button) => button.addEventListener('click', () => this.close()));
@@ -29,6 +34,7 @@ class MicTestController {
   }
 
   open() {
+    this.connectionFailures = 0;
     this.modal.classList.remove('is-hidden');
     this.setStatus('ready', '테스트 대기 중');
     this.transcript.textContent = '아직 인식된 목소리가 없습니다.';
@@ -100,6 +106,7 @@ class MicTestController {
       this.source.connect(this.analyser);
       this.resumeAudioContext();
       this.active = true;
+      this.connectionFailures = 0;
       this.starting = false;
       this.startButton.disabled = false;
       this.startButton.textContent = '테스트 종료';
@@ -117,6 +124,13 @@ class MicTestController {
       this.active = false;
       this.starting = false;
       this.pendingAudioContext = null;
+      this.detachStreamTrackWatcher();
+      if (this.stream === stream) this.stream = null;
+      this.source?.disconnect?.();
+      this.source = null;
+      this.analyser?.disconnect?.();
+      this.analyser = null;
+      if (this.audioContext === audioContext) this.audioContext = null;
       stream?.getTracks?.().forEach((track) => track.stop());
       audioContext?.close?.();
       this.startButton.disabled = false;
@@ -126,7 +140,9 @@ class MicTestController {
       } else {
         this.setStatus('ready', '마이크 자동 재연결 중');
         this.transcript.textContent = '마이크 연결 응답이 없어 자동으로 다시 연결합니다.';
-        this.scheduleConnectionRetry(1200);
+        this.connectionFailures += 1;
+        const retryDelay = Math.min(12000, 1200 * (2 ** Math.min(3, this.connectionFailures - 1)));
+        this.scheduleConnectionRetry(retryDelay);
       }
     }
   }
@@ -200,6 +216,7 @@ class MicTestController {
     clearTimeout(this.speechMaxTimer);
     clearTimeout(this.recognitionStartTimer);
     clearTimeout(this.recognitionWatchdogTimer);
+    this.recognitionReady = false;
     const recognition = this.recognition;
     this.recognition = null;
     if (!recognition) return;
@@ -221,15 +238,28 @@ class MicTestController {
 
   startRecognitionWithActiveTrack(recognition) {
     const track = this.stream?.getAudioTracks?.()[0];
-    if (track?.readyState === 'live') {
+    this.recognitionUsesTrack = false;
+    if (this.preferRecognitionTrack && track?.readyState === 'live') {
       try {
         recognition.start(track);
+        this.recognitionUsesTrack = true;
         return;
       } catch (error) {
         if (!['TypeError', 'NotSupportedError'].includes(error?.name)) throw error;
       }
     }
     recognition.start();
+  }
+
+  armSilenceTimer(runId, cycleId) {
+    if (!this.isCurrentCycle(runId, cycleId) || !this.testCycleActive || this.voiceDetected) return;
+    this.cycleDeadline ??= performance.now() + this.silenceTimeoutMs;
+    clearTimeout(this.silenceTimer);
+    const remaining = Math.max(0, this.cycleDeadline - performance.now());
+    this.silenceTimer = window.setTimeout(
+      () => this.resetSilentCycle(runId, cycleId),
+      remaining,
+    );
   }
 
   beginListeningCycle(runId = this.runId, preserveTranscript = false) {
@@ -240,16 +270,14 @@ class MicTestController {
     const cycleId = ++this.cycleId;
     this.testCycleActive = true;
     this.voiceDetected = false;
+    this.recognitionReady = false;
     this.detectedFrames = 0;
-    this.cycleDeadline = performance.now() + this.silenceTimeoutMs;
+    this.cycleDeadline = null;
+    this.recognitionStartFailures = 0;
     this.meterFill.style.width = '0%';
     this.levelText.textContent = '입력 레벨 0%';
     if (!preserveTranscript) this.transcript.textContent = '아직 인식된 목소리가 없습니다.';
     this.setStatus('listening', '자동 테스트 중 — 5초 안에 말하세요');
-    this.silenceTimer = window.setTimeout(
-      () => this.resetSilentCycle(runId, cycleId),
-      this.silenceTimeoutMs,
-    );
     this.startSpeechRecognition(runId, cycleId);
   }
 
@@ -257,9 +285,12 @@ class MicTestController {
     if (!this.isCurrentCycle(runId, cycleId) || !this.testCycleActive) return;
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
+      this.recognitionReady = true;
+      this.armSilenceTimer(runId, cycleId);
       this.transcript.textContent = '이 브라우저는 문장 인식을 지원하지 않지만 입력 음량은 확인할 수 있습니다.';
       return;
     }
+    this.recognitionReady = false;
     const recognition = new SpeechRecognition();
     this.recognition = recognition;
     recognition.lang = 'ko-KR';
@@ -269,18 +300,25 @@ class MicTestController {
     recognition.onstart = () => {
       if (!this.isCurrentCycle(runId, cycleId) || recognition !== this.recognition) return;
       recognitionStarted = true;
+      this.recognitionStartFailures = 0;
+      this.recognitionReady = true;
       clearTimeout(this.recognitionStartTimer);
+      this.armSilenceTimer(runId, cycleId);
       this.setStatus('listening', '자동 테스트 중 — 5초 안에 말하세요');
     };
     recognition.onspeechstart = () => {
       recognitionStarted = true;
+      this.recognitionReady = true;
       clearTimeout(this.recognitionStartTimer);
+      this.armSilenceTimer(runId, cycleId);
       this.markVoiceDetected(runId, cycleId, '목소리 입력이 감지되었습니다');
     };
     recognition.onresult = (event) => {
       if (!this.isCurrentCycle(runId, cycleId) || recognition !== this.recognition) return;
       recognitionStarted = true;
+      this.recognitionReady = true;
       clearTimeout(this.recognitionStartTimer);
+      this.armSilenceTimer(runId, cycleId);
       const value = Array.from(event.results).map((result) => result[0].transcript).join(' ').trim();
       if (value) {
         this.transcript.textContent = `“${value}”`;
@@ -291,6 +329,7 @@ class MicTestController {
       if (!this.isCurrentCycle(runId, cycleId) || recognition !== this.recognition || event.error === 'aborted') return;
       if (['not-allowed', 'service-not-allowed', 'audio-capture'].includes(event.error)) {
         if (event.error === 'audio-capture') {
+          if (this.recognitionUsesTrack) this.preferRecognitionTrack = false;
           this.stop(false);
           this.setStatus('ready', '마이크 자동 재연결 중');
           this.transcript.textContent = '마이크 캡처가 멈춰 자동으로 다시 연결합니다.';
@@ -314,13 +353,29 @@ class MicTestController {
       clearTimeout(this.recognitionStartTimer);
       clearTimeout(this.recognitionWatchdogTimer);
       this.recognition = null;
+      this.recognitionReady = false;
+      if (!recognitionStarted) {
+        this.recognitionStartFailures += 1;
+        this.setStatus('ready', '음성 인식 자동 재연결 중');
+        this.transcript.textContent = '음성 인식이 시작되지 않아 자동으로 다시 테스트합니다.';
+        if (this.recognitionStartFailures >= 4) {
+          this.testCycleActive = false;
+          this.cycleRestartTimer = window.setTimeout(() => this.beginListeningCycle(runId, true), 3000);
+          return;
+        }
+        this.recognitionRetryTimer = window.setTimeout(
+          () => this.startSpeechRecognition(runId, cycleId),
+          Math.min(1400, 250 + this.recognitionStartFailures * 200),
+        );
+        return;
+      }
       if (this.voiceDetected) {
         this.testCycleActive = false;
         clearTimeout(this.silenceTimer);
         this.cycleRestartTimer = window.setTimeout(() => this.beginListeningCycle(runId, true), 900);
         return;
       }
-      const remaining = this.cycleDeadline - performance.now();
+      const remaining = (this.cycleDeadline ?? performance.now()) - performance.now();
       if (remaining <= 0) {
         this.resetSilentCycle(runId, cycleId);
         return;
@@ -359,10 +414,10 @@ class MicTestController {
         this.setStatus('error', '음성 인식 권한이 차단되었습니다');
         this.transcript.textContent = '브라우저의 마이크 권한을 확인하세요.';
       } else {
-        const remaining = this.cycleDeadline - performance.now();
+        const remaining = this.cycleDeadline == null ? 500 : this.cycleDeadline - performance.now();
         this.recognitionRetryTimer = window.setTimeout(
           () => this.startSpeechRecognition(runId, cycleId),
-          Math.min(500, Math.max(0, remaining)),
+          Math.min(500, Math.max(100, remaining)),
         );
       }
     }
@@ -373,6 +428,13 @@ class MicTestController {
     if (!this.voiceDetected) {
       this.voiceDetected = true;
       clearTimeout(this.silenceTimer);
+      const supportsRecognition = Boolean(window.SpeechRecognition || window.webkitSpeechRecognition);
+      if (!supportsRecognition) {
+        this.testCycleActive = false;
+        this.setStatus('detected', '마이크 음량 입력이 정상입니다');
+        this.cycleRestartTimer = window.setTimeout(() => this.beginListeningCycle(runId, true), 900);
+        return;
+      }
       clearTimeout(this.speechMaxTimer);
       this.speechMaxTimer = window.setTimeout(() => {
         if (!this.isCurrentCycle(runId, cycleId)) return;
@@ -419,7 +481,7 @@ class MicTestController {
     this.levelText.textContent = `입력 레벨 ${level}%`;
     if (rms > .025) {
       this.detectedFrames += 1;
-      if (this.detectedFrames >= 3) this.markVoiceDetected(this.runId, this.cycleId, '목소리 입력이 감지되었습니다');
+      if (this.recognitionReady && this.detectedFrames >= 3) this.markVoiceDetected(this.runId, this.cycleId, '목소리 입력이 감지되었습니다');
     } else {
       this.detectedFrames = 0;
     }

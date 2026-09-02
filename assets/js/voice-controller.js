@@ -16,13 +16,20 @@ class VoiceController {
     this.stagePromptLine = document.querySelector('#stage-prompt-line');
     this.stagePromptHint = document.querySelector('#stage-prompt-hint');
     this.gameFrame = document.querySelector('.game-frame');
+    this.helpDialog = document.querySelector('#help-dialog');
+    this.micTestModal = document.querySelector('#mic-test-modal');
     this.activeRequest = null;
     this.recording = false;
     this.requestId = 0;
+    this.switchId = 0;
     this.cycleId = 0;
     this.audioPromise = null;
+    this.audioGeneration = 0;
     this.audioTrack = null;
     this.trackEndedHandler = null;
+    this.recognitionReady = false;
+    this.preferRecognitionTrack = true;
+    this.recognitionUsesTrack = false;
     this.silenceTimeoutMs = 5000;
     this.fallbackButton.addEventListener('click', () => this.useFallback('2'));
     this.micSelect.addEventListener('change', () => this.switchMicrophone());
@@ -35,8 +42,14 @@ class VoiceController {
   request(config) {
     this.cancel('replaced');
     this.enterStage(config);
+    this.startTiming = null;
+    this.voiceDetected = false;
+    this.transcript = '';
     return new Promise((resolve) => {
-      const request = { config, resolve, id: ++this.requestId, starting: false, started: false };
+      const request = {
+        config, resolve, id: ++this.requestId, starting: false, started: false,
+        startAttempt: 0, connectionFailures: 0, recognitionStartFailures: 0,
+      };
       this.activeRequest = request;
       void this.startRecording(request);
     });
@@ -77,11 +90,12 @@ class VoiceController {
     }
     if (this.audioPromise) return this.audioPromise;
 
-    this.audioPromise = (async () => {
+    const generation = ++this.audioGeneration;
+    const audioPromise = (async () => {
       const AudioContextClass = window.AudioContext || window.webkitAudioContext;
       if (!AudioContextClass) throw new Error('AudioContextUnavailable');
       if (!this.audioContext || this.audioContext.state === 'closed') this.audioContext = new AudioContextClass();
-      if (this.stream) this.releaseAudioStream();
+      if (this.stream) this.releaseAudioStream(false);
       this.resumeAudioContext();
       const selectedDeviceId = this.micSelect.value;
       const audioOptions = (deviceId = '') => ({
@@ -89,14 +103,22 @@ class VoiceController {
         noiseSuppression: true,
         ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
       });
+      let stream;
       try {
-        this.stream = await this.getUserMediaWithTimeout({ audio: audioOptions(selectedDeviceId) });
+        stream = await this.getUserMediaWithTimeout({ audio: audioOptions(selectedDeviceId) });
       } catch (error) {
         const selectedDeviceMissing = selectedDeviceId && ['OverconstrainedError', 'NotFoundError'].includes(error?.name);
         if (!selectedDeviceMissing) throw error;
         this.micSelect.value = '';
-        this.stream = await this.getUserMediaWithTimeout({ audio: audioOptions() });
+        stream = await this.getUserMediaWithTimeout({ audio: audioOptions() });
       }
+      if (generation !== this.audioGeneration) {
+        stream.getTracks().forEach((track) => track.stop());
+        const error = new Error('Outdated microphone request');
+        error.name = 'StaleAudioRequest';
+        throw error;
+      }
+      this.stream = stream;
       this.source?.disconnect?.();
       this.source = this.audioContext.createMediaStreamSource(this.stream);
       this.analyser = this.audioContext.createAnalyser();
@@ -106,11 +128,12 @@ class VoiceController {
       this.resumeAudioContext();
       void this.refreshDevices().catch(() => {});
     })();
+    this.audioPromise = audioPromise;
 
     try {
-      await this.audioPromise;
+      await audioPromise;
     } finally {
-      this.audioPromise = null;
+      if (this.audioPromise === audioPromise) this.audioPromise = null;
     }
   }
 
@@ -122,6 +145,17 @@ class VoiceController {
     } catch (error) {
       // 음성 인식은 계속 사용하고, 다음 사용자 입력 때 음량 분석을 다시 활성화합니다.
     }
+  }
+
+  prepareStageAudio() {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (AudioContextClass && (!this.audioContext || this.audioContext.state === 'closed')) {
+      this.audioContext = new AudioContextClass();
+    }
+    this.resumeAudioContext();
+    void this.ensureAudio().catch(() => {
+      // 실제 대사 요청에서 권한 거부와 연결 실패를 구분해 화면에 표시합니다.
+    });
   }
 
   getUserMediaWithTimeout(constraints, timeoutMs = 6000) {
@@ -175,7 +209,11 @@ class VoiceController {
     this.trackEndedHandler = null;
   }
 
-  releaseAudioStream() {
+  releaseAudioStream(invalidatePending = true) {
+    if (invalidatePending) {
+      this.audioGeneration += 1;
+      this.audioPromise = null;
+    }
     this.detachAudioTrackWatcher();
     this.stream?.getTracks?.().forEach((track) => track.stop());
     this.stream = null;
@@ -208,6 +246,11 @@ class VoiceController {
 
   async switchMicrophone() {
     const request = this.activeRequest;
+    const switchId = ++this.switchId;
+    if (request) {
+      request.startAttempt += 1;
+      request.starting = false;
+    }
     clearTimeout(this.restartTimer);
     this.stopRecognitionCycle();
     this.releaseAudioStream();
@@ -215,17 +258,25 @@ class VoiceController {
     this.setStatus('listening', '선택한 마이크에 연결하는 중');
     try {
       await this.ensureAudio();
+      if (switchId !== this.switchId) return;
       const label = this.stream?.getAudioTracks?.()[0]?.label || this.micSelect.selectedOptions[0]?.textContent || '선택한 마이크';
       this.setStatus('detected', `${label} 연결됨`);
       this.micLabel.textContent = '마이크 자동 듣기 준비';
       if (request === this.activeRequest) this.scheduleRestart(request, 250);
     } catch (error) {
+      if (switchId !== this.switchId) return;
       this.setStatus('error', '마이크 변경 실패');
       this.hint.textContent = '선택한 마이크를 열 수 없습니다. 브라우저 권한을 확인하세요.';
       this.micLabel.textContent = '마이크 연결 확인 필요';
       const permissionBlocked = ['NotAllowedError', 'SecurityError'].includes(error?.name);
       if (!permissionBlocked && request === this.activeRequest) this.scheduleRestart(request, 1500);
     }
+  }
+
+  pauseAudioForMicTest() {
+    clearTimeout(this.restartTimer);
+    this.stopRecognitionCycle();
+    this.releaseAudioStream();
   }
 
   showMicrophoneError(error) {
@@ -266,6 +317,7 @@ class VoiceController {
   stopRecognitionCycle() {
     this.cycleId += 1;
     this.recording = false;
+    this.recognitionReady = false;
     clearTimeout(this.maxTimer);
     clearTimeout(this.silenceTimer);
     clearTimeout(this.recognitionStartTimer);
@@ -299,15 +351,28 @@ class VoiceController {
 
   startRecognitionWithActiveTrack(recognition) {
     const track = this.stream?.getAudioTracks?.()[0];
-    if (track?.readyState === 'live') {
+    this.recognitionUsesTrack = false;
+    if (this.preferRecognitionTrack && track?.readyState === 'live') {
       try {
         recognition.start(track);
+        this.recognitionUsesTrack = true;
         return;
       } catch (error) {
         if (!['TypeError', 'NotSupportedError'].includes(error?.name)) throw error;
       }
     }
     recognition.start();
+  }
+
+  armSilenceTimer(request, cycleId, recognition) {
+    if (!this.isCurrentCycle(request, cycleId, recognition) || this.voiceDetected) return;
+    request.silenceStartedAt ??= performance.now();
+    clearTimeout(this.silenceTimer);
+    const remaining = Math.max(0, this.silenceTimeoutMs - (performance.now() - request.silenceStartedAt));
+    this.silenceTimer = window.setTimeout(
+      () => this.resetSilentRecording(request, cycleId, recognition),
+      remaining,
+    );
   }
 
   async startRecording(request = this.activeRequest) {
@@ -320,22 +385,34 @@ class VoiceController {
       return;
     }
 
+    const attempt = ++request.startAttempt;
     request.starting = true;
     this.micLabel.textContent = '마이크 자동 연결 중';
     this.setStatus('listening', '마이크에 연결하는 중');
     try {
       await this.ensureAudio();
     } catch (error) {
+      if (attempt !== request.startAttempt) return;
       request.starting = false;
       if (request === this.activeRequest) {
+        if (error?.name === 'StaleAudioRequest') {
+          this.scheduleRestart(request, 250);
+          return;
+        }
         this.showMicrophoneError(error);
         const permissionBlocked = ['NotAllowedError', 'SecurityError'].includes(error?.name);
-        if (!permissionBlocked) this.scheduleRestart(request, 1500);
+        if (!permissionBlocked) {
+          request.connectionFailures += 1;
+          const retryDelay = Math.min(12000, 1500 * (2 ** Math.min(3, request.connectionFailures - 1)));
+          this.scheduleRestart(request, retryDelay);
+        }
       }
       return;
     }
+    if (attempt !== request.startAttempt) return;
     request.starting = false;
-    if (request !== this.activeRequest) return;
+    if (request !== this.activeRequest || this.recording) return;
+    request.connectionFailures = 0;
 
     const cycleId = ++this.cycleId;
     this.recording = true;
@@ -347,7 +424,6 @@ class VoiceController {
     this.speechEndedAt = null;
     this.startTiming = null;
     this.lastSpeechError = null;
-    request.silenceStartedAt ??= performance.now();
     this.micLabel.textContent = '마이크 자동 듣기 중';
     this.hint.textContent = '마이크가 자동으로 듣고 있습니다. 5초 안에 대사를 말해 주세요.';
     this.setStatus('listening', '자동 듣는 중 — 대사를 말하세요');
@@ -362,13 +438,18 @@ class VoiceController {
     recognition.onstart = () => {
       if (!this.isCurrentCycle(request, cycleId, recognition)) return;
       recognitionStarted = true;
+      request.recognitionStartFailures = 0;
+      this.recognitionReady = true;
       clearTimeout(this.recognitionStartTimer);
+      this.armSilenceTimer(request, cycleId, recognition);
       this.micLabel.textContent = '마이크 자동 듣기 중';
       this.setStatus('listening', '자동 듣는 중 — 대사를 말하세요');
     };
     recognition.onspeechstart = () => {
       recognitionStarted = true;
+      this.recognitionReady = true;
       clearTimeout(this.recognitionStartTimer);
+      this.armSilenceTimer(request, cycleId, recognition);
       this.markVoiceDetected('목소리 입력 확인됨', request, cycleId, recognition);
     };
     recognition.onspeechend = () => {
@@ -377,7 +458,9 @@ class VoiceController {
     recognition.onresult = (event) => {
       if (!this.isCurrentCycle(request, cycleId, recognition)) return;
       recognitionStarted = true;
+      this.recognitionReady = true;
       clearTimeout(this.recognitionStartTimer);
+      this.armSilenceTimer(request, cycleId, recognition);
       this.transcript = Array.from(event.results).map((result) => result[0].transcript).join(' ');
       this.hint.textContent = this.transcript || '듣고 있어요…';
       if (this.transcript) this.markVoiceDetected('음성 인식 확인됨', request, cycleId, recognition);
@@ -385,7 +468,9 @@ class VoiceController {
     recognition.onerror = (event) => {
       if (!this.isCurrentCycle(request, cycleId, recognition) || event.error === 'aborted') return;
       if (['not-allowed', 'service-not-allowed', 'audio-capture'].includes(event.error)) {
+        const activeTrackFailed = event.error === 'audio-capture' && this.recognitionUsesTrack;
         this.stopRecognitionCycle();
+        if (activeTrackFailed) this.preferRecognitionTrack = false;
         this.showMicrophoneError(event.error);
         if (event.error === 'audio-capture' && request === this.activeRequest) {
           this.releaseAudioStream();
@@ -399,6 +484,7 @@ class VoiceController {
     this.recognitionStartTimer = window.setTimeout(() => {
       if (!this.isCurrentCycle(request, cycleId, recognition) || recognitionStarted) return;
       this.stopRecognitionCycle();
+      request.silenceStartedAt = null;
       this.hint.textContent = '음성 인식 시작이 늦어 자동으로 다시 연결합니다. 같은 대사를 말해 주세요.';
       this.setStatus('ready', '음성 인식 자동 재연결 중');
       this.micLabel.textContent = '마이크 자동 재연결 중';
@@ -433,12 +519,6 @@ class VoiceController {
       return;
     }
     this.measureVolume(request, cycleId, recognition);
-    clearTimeout(this.silenceTimer);
-    const silenceRemaining = Math.max(0, this.silenceTimeoutMs - (performance.now() - request.silenceStartedAt));
-    this.silenceTimer = window.setTimeout(
-      () => this.resetSilentRecording(request, cycleId, recognition),
-      silenceRemaining,
-    );
   }
 
   markVoiceDetected(label = '목소리 입력 확인됨', request = this.activeRequest, cycleId = this.cycleId, recognition = this.recognition) {
@@ -495,7 +575,7 @@ class VoiceController {
     this.meterFill.style.width = `${Math.min(100, 4 + rms * 720)}%`;
     if (rms > .025) {
       this.detectedFrames += 1;
-      if (this.detectedFrames >= 3) this.markVoiceDetected('목소리 입력 확인됨', request, cycleId, recognition);
+      if (this.recognitionReady && this.detectedFrames >= 3) this.markVoiceDetected('목소리 입력 확인됨', request, cycleId, recognition);
     } else {
       this.detectedFrames = 0;
     }
@@ -507,6 +587,22 @@ class VoiceController {
     if (!this.isCurrentCycle(request, cycleId, recognition) || !this.recording) return;
     const transcript = this.transcript.trim();
     const speechError = this.lastSpeechError;
+    const recognitionNeverStarted = request.silenceStartedAt == null && !transcript && !this.voiceDetected;
+    if (recognitionNeverStarted) {
+      request.recognitionStartFailures = (request.recognitionStartFailures ?? 0) + 1;
+      this.stopRecognitionCycle();
+      this.hint.textContent = '음성 인식이 시작되지 않아 자동으로 다시 연결합니다. 키보드로도 바로 진행할 수 있습니다.';
+      this.setStatus('ready', '음성 인식 자동 재연결 중');
+      this.micLabel.textContent = '마이크 자동 재연결 중';
+      if (request.recognitionStartFailures >= 4) {
+        request.recognitionStartFailures = 0;
+        this.releaseAudioStream();
+        this.scheduleRestart(request, 2000);
+      } else {
+        this.scheduleRestart(request, 300 + request.recognitionStartFailures * 200);
+      }
+      return;
+    }
     const silentEnd = !transcript && !this.voiceDetected && (!speechError || speechError === 'no-speech');
     if (silentEnd) {
       const silentFor = performance.now() - (request.silenceStartedAt ?? performance.now());
@@ -522,7 +618,7 @@ class VoiceController {
       return;
     }
     const endedAt = this.speechEndedAt ?? performance.now();
-    const duration = this.startedAt ? Math.max(.4, (endedAt - this.startedAt) / 1000) : .4;
+    const duration = this.startedAt ? Math.min(6.5, Math.max(.4, (endedAt - this.startedAt) / 1000)) : .4;
     const sorted = [...this.samples].sort((a, b) => a - b);
     const useful = sorted.slice(Math.floor(sorted.length * .18));
     const rms = useful.reduce((sum, value) => sum + value, 0) / Math.max(1, useful.length);
@@ -538,11 +634,12 @@ class VoiceController {
   }
 
   handleFallbackKey(event) {
-    if (!this.activeRequest || event.repeat) return;
+    if (!this.activeRequest || event.repeat || event.isComposing) return;
+    if (this.helpDialog?.open || (this.micTestModal && !this.micTestModal.classList.contains('is-hidden'))) return;
     const answer = event.key === 'Enter' ? '2' : event.key;
     if (!['1', '2', '3'].includes(answer)) return;
     const tagName = event.target?.tagName;
-    if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tagName)) return;
+    if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tagName) || event.target?.isContentEditable) return;
     if (event.key === 'Enter' && tagName === 'BUTTON' && event.target !== this.fallbackButton) return;
     event.preventDefault();
     this.useFallback(answer);
