@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#111827" />
+    <title>목소리 한 판!</title>
+      <link rel="stylesheet" href="./assets/css/base.css">
+    <link rel="stylesheet" href="./assets/css/voice-ui.css">
+    <link rel="stylesheet" href="./assets/css/responsive.css">
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div>
+          <span class="eyebrow">VOICE ACTING PROTOTYPE</span>
+          <h1>목소리 한 판!</h1>
+        </div>
+        <button id="help-button" class="ghost-button" type="button">플레이 방법</button>
+      </header>
+
+      <section class="game-frame" aria-label="게임 화면">
+        <div id="game"></div>
+        <div id="toast" class="toast" role="status" aria-live="polite"></div>
+        <button id="lobby-button" class="lobby-button is-hidden" type="button">← 로비</button>
+
+        <section id="stage-prompt" class="stage-prompt is-hidden" aria-live="polite">
+          <div class="stage-prompt-heading">
+            <span>지금 말할 대사</span>
+            <span id="stage-prompt-context">상황을 확인하세요</span>
+          </div>
+          <strong id="stage-prompt-line">“대사를 준비하세요.”</strong>
+          <span id="stage-prompt-hint">상황에 맞는 목소리로 연기하세요.</span>
+        </section>
+
+        <section id="voice-panel" class="voice-panel is-hidden" aria-live="polite">
+          <div class="voice-copy">
+            <span id="voice-kicker" class="eyebrow">VOICE INPUT</span>
+            <strong id="voice-line">대사를 준비하세요.</strong>
+            <span id="voice-hint">버튼을 누르고 말한 뒤, 다시 눌러 종료하세요.</span>
+            <label class="device-picker" for="mic-device-select">
+              <span>사용 마이크</span>
+              <select id="mic-device-select" disabled>
+                <option value="">권한 허용 후 장치 확인</option>
+              </select>
+            </label>
+          </div>
+          <div class="voice-monitor">
+            <div class="mic-status">
+              <span id="mic-status-dot" class="mic-status-dot"></span>
+              <span id="mic-status-text">마이크 대기</span>
+            </div>
+            <div class="meter" aria-label="마이크 음량">
+              <span id="meter-fill"></span>
+            </div>
+          </div>
+          <button id="mic-button" class="mic-button" type="button">
+            <span class="mic-dot"></span>
+            <span id="mic-label">마이크 켜고 말하기</span>
+          </button>
+          <button id="fallback-button" class="fallback-button" type="button">키보드 테스트</button>
+        </section>
+
+        <section id="mic-test-modal" class="mic-test-modal is-hidden" aria-label="마이크 테스트">
+          <div class="mic-test-card">
+            <button id="mic-test-close-x" class="mic-test-close-x" type="button" aria-label="닫기">×</button>
+            <span class="eyebrow">MICROPHONE CHECK</span>
+            <h2>게임 시작 전 마이크 테스트</h2>
+            <p class="mic-test-description">게임에 사용할 마이크를 선택하고, 실제 목소리와 음성 인식이 정상적으로 들어오는지 확인하세요.</p>
+
+            <label class="test-device-picker" for="test-device-select">
+              <span>사용 마이크</span>
+              <select id="test-device-select" disabled>
+                <option value="">테스트 시작 후 장치 확인</option>
+              </select>
+            </label>
+
+            <div class="test-input-box">
+              <div class="test-status-row">
+                <span id="test-status-dot" class="test-status-dot"></span>
+                <strong id="test-status-text">테스트 대기 중</strong>
+                <span id="test-level-text">입력 레벨 0%</span>
+              </div>
+              <div class="test-meter" aria-label="마이크 입력 음량">
+                <span id="test-meter-fill"></span>
+              </div>
+            </div>
+
+            <div class="test-phrase">
+              <span>아래 문장을 말해보세요</span>
+              <strong>“안녕하세요, 마이크 테스트입니다.”</strong>
+            </div>
+
+            <div class="test-recognized">
+              <span>인식된 문장</span>
+              <strong id="test-transcript">아직 인식된 목소리가 없습니다.</strong>
+            </div>
+
+            <div class="mic-test-actions">
+              <button id="mic-test-close" class="fallback-button" type="button">로비로 돌아가기</button>
+              <button id="mic-test-start" class="mic-button" type="button">마이크 테스트 시작</button>
+            </div>
+          </div>
+        </section>
+      </section>
+
+      <dialog id="help-dialog">
+        <h2>플레이 방법</h2>
+        <p>화면 상황을 보고 적절한 순간에 마이크 버튼을 누른 뒤, 제시된 대사를 상황에 맞는 목소리로 말하세요.</p>
+        <ul>
+          <li>로비의 마이크 테스트에서 입력 장치와 음성 인식을 먼저 확인할 수 있습니다.</li>
+          <li>음성 인식은 Chrome 또는 Edge에서 가장 안정적입니다.</li>
+          <li>마이크 권한이 없으면 키보드 테스트 버튼으로 판정을 선택할 수 있습니다.</li>
+          <li>단순히 크게 말하는 것보다 타이밍과 상황에 맞는 톤이 중요합니다.</li>
+        </ul>
+        <button id="close-help" class="primary-button" type="button">확인</button>
+      </dialog>
+    </main>
+    <script defer src="./assets/vendor/phaser.min.js"></script>
+    <script defer src="./assets/js/voice-evaluator.js"></script>
+    <script defer src="./assets/js/voice-controller.js"></script>
+    <script defer src="./assets/js/mic-test-controller.js"></script>
+    <script defer src="./assets/js/game.js"></script>
+  </body>
+</html>

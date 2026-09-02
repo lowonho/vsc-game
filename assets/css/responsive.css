@@ -1,0 +1,26 @@
+/* @split responsive */
+@media (max-width: 850px) {
+  .stage-prompt { top: 120px; width: calc(100% - 80px); }
+  .voice-panel { grid-template-columns: 1fr auto; }
+  .voice-monitor { grid-column: 1 / -1; grid-row: 2; }
+  .fallback-button { grid-column: 1; }
+  .mic-button { grid-column: 2; grid-row: 1; }
+}
+
+@media (max-width: 560px) {
+  .app-shell { width: min(100% - 16px, 1280px); padding-top: 12px; }
+  .topbar .eyebrow { display: none; }
+  .game-frame { border-radius: 16px; }
+  .stage-prompt { top: 82px; width: calc(100% - 24px); padding: 10px 12px; }
+  .stage-prompt-heading { flex-direction: column; gap: 2px; }
+  #stage-prompt-hint { display: none; }
+  .voice-panel { grid-template-columns: 1fr; }
+  .mic-button, .fallback-button, .voice-monitor { grid-column: 1; grid-row: auto; }
+  #voice-line { white-space: normal; }
+  .mic-test-modal { padding: 8px; }
+  .mic-test-card { padding: 20px 16px; max-height: calc(100% - 16px); overflow: auto; }
+  .mic-test-card h2 { font-size: 22px; padding-right: 35px; }
+  .test-device-picker { grid-template-columns: 1fr; gap: 6px; }
+  .mic-test-actions { flex-direction: column-reverse; }
+  .mic-test-actions button { width: 100%; }
+}
