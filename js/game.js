@@ -13,6 +13,12 @@ function toast(message) {
 document.querySelector('#help-button').addEventListener('click', () => document.querySelector('#help-dialog').showModal());
 document.querySelector('#close-help').addEventListener('click', () => document.querySelector('#help-dialog').close());
 
+const RENDER_WIDTH = 1920;
+const RENDER_HEIGHT = 1080;
+const LOGICAL_WIDTH = 1280;
+const LOGICAL_HEIGHT = 720;
+const RENDER_SCALE = RENDER_WIDTH / LOGICAL_WIDTH;
+
 const palette = {
   ink: 0x0f172a, paper: 0xf8fafc, muted: 0x94a3b8, cyan: 0x22d3ee,
   violet: 0x8b5cf6, pink: 0xec4899, amber: 0xf59e0b, red: 0xef4444,
@@ -21,7 +27,26 @@ const palette = {
 
 const textStyle = { fontFamily: 'Pretendard, Noto Sans KR, sans-serif', color: '#f8fafc' };
 
+class BootScene extends Phaser.Scene {
+  constructor() { super('Boot'); }
+  preload() { preloadGameAssets(this); }
+  create() { this.scene.start('Title'); }
+}
+
 class BaseScene extends Phaser.Scene {
+  init() {
+    this.cameras.main
+      .setZoom(RENDER_SCALE)
+      .centerOn(LOGICAL_WIDTH / 2, LOGICAL_HEIGHT / 2);
+  }
+
+  addBackground(assetKey, depth = -1000) {
+    if (!this.textures.exists(assetKey)) return null;
+    return this.add.image(LOGICAL_WIDTH / 2, LOGICAL_HEIGHT / 2, assetKey)
+      .setDisplaySize(LOGICAL_WIDTH, LOGICAL_HEIGHT)
+      .setDepth(depth);
+  }
+
   createHeader(stage, title, subtitle) {
     lobbyButton.classList.remove('is-hidden');
     voice.enterStage();
@@ -204,6 +229,7 @@ class TitleScene extends BaseScene {
     voice.leaveStage();
     lobbyButton.classList.add('is-hidden');
     this.cameras.main.setBackgroundColor('#080d19');
+    this.addBackground('lobbyBackground');
     const glow = this.add.graphics();
     glow.fillStyle(0x7c3aed, .14).fillCircle(1100, 100, 360);
     glow.fillStyle(0x22d3ee, .08).fillCircle(130, 620, 310);
@@ -248,10 +274,12 @@ class TaxiScene extends BaseScene {
   create() {
     this.cameras.main.setBackgroundColor('#111827');
     this.createHeader('STAGE 01', '할증 2분 전, 빈 택시를 잡아라', '빈차가 적정 거리에 들어왔을 때 불러 세우고 목적지를 전달하세요.');
-    this.add.rectangle(640, 300, 1280, 260, 0x172554);
-    for (let i = 0; i < 9; i++) this.add.rectangle(i * 170 + 40, 352 - (i % 3) * 35, 115, 180, i % 2 ? 0x1e293b : 0x334155);
-    this.add.rectangle(640, 505, 1280, 260, 0x1e293b);
-    for (let i = 0; i < 8; i++) this.add.rectangle(i * 190 + 80, 510, 90, 8, 0xf8fafc, .45);
+    if (!this.addBackground('taxiBackground')) {
+      this.add.rectangle(640, 300, 1280, 260, 0x172554);
+      for (let i = 0; i < 9; i++) this.add.rectangle(i * 170 + 40, 352 - (i % 3) * 35, 115, 180, i % 2 ? 0x1e293b : 0x334155);
+      this.add.rectangle(640, 505, 1280, 260, 0x1e293b);
+      for (let i = 0; i < 8; i++) this.add.rectangle(i * 190 + 80, 510, 90, 8, 0xf8fafc, .45);
+    }
     this.add.rectangle(705, 495, 270, 210, 0x22d3ee, .08).setStrokeStyle(2, palette.cyan, .55);
     this.add.text(705, 400, '호출 적정 거리', { ...textStyle, fontSize: 15, fontStyle: 'bold', color: '#67e8f9' }).setOrigin(.5);
     this.player = this.add.container(280, 510, [
@@ -316,7 +344,7 @@ class CourtScene extends BaseScene {
     this.cameras.main.setBackgroundColor('#2b1721');
     this.createHeader('STAGE 02', '결정적 모순이 나온 순간', '아무 때나 외치면 감점입니다. 증언을 끝까지 듣고 모순이 드러난 순간 이의를 제기하세요.');
     this.stageScores = [];
-    this.add.rectangle(640, 483, 1280, 360, 0x3f2634);
+    if (!this.addBackground('courtBackground')) this.add.rectangle(640, 483, 1280, 360, 0x3f2634);
     this.add.rectangle(640, 298, 520, 120, 0x78350f).setStrokeStyle(5, 0x451a03);
     this.add.text(640, 267, '판 사', { ...textStyle, fontSize: 21, fontStyle: 'bold' }).setOrigin(.5);
     this.add.circle(640, 197, 42, 0xf3c7a6);
@@ -383,7 +411,7 @@ class RamenScene extends BaseScene {
     this.cameras.main.setBackgroundColor('#101827');
     this.createHeader('STAGE 03', '새벽 1시, 엄마 몰래 라면', '라면은 먹고 싶지만 엄마를 깨우면 끝입니다. 화가 나도 목소리를 낮게 유지하세요.');
     this.stageScores = [];
-    this.add.rectangle(640, 470, 1280, 430, 0x1f2937);
+    if (!this.addBackground('ramenBackground')) this.add.rectangle(640, 470, 1280, 430, 0x1f2937);
     this.add.rectangle(305, 470, 480, 260, 0x334155).setStrokeStyle(3, 0x64748b);
     this.add.rectangle(305, 350, 430, 45, 0x94a3b8);
     this.add.rectangle(320, 412, 170, 36, 0x0f172a);
@@ -447,6 +475,7 @@ class SummaryScene extends BaseScene {
     voice.leaveStage();
     lobbyButton.classList.add('is-hidden');
     this.cameras.main.setBackgroundColor('#080d19');
+    this.addBackground('summaryBackground');
     const scores = [
       ['택시 잡기', this.registry.get('TaxiScore') ?? 0, '#67e8f9'],
       ['법정 이의 제기', this.registry.get('CourtScore') ?? 0, '#c4b5fd'],
@@ -474,12 +503,12 @@ class SummaryScene extends BaseScene {
 const game = new Phaser.Game({
   type: Phaser.AUTO,
   parent: 'game',
-  width: 1280,
-  height: 720,
+  width: RENDER_WIDTH,
+  height: RENDER_HEIGHT,
   backgroundColor: '#080d19',
   scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
   render: { antialias: true, pixelArt: false },
-  scene: [TitleScene, TaxiScene, CourtScene, RamenScene, SummaryScene],
+  scene: [BootScene, TitleScene, TaxiScene, CourtScene, RamenScene, SummaryScene],
 });
 
 lobbyButton.addEventListener('click', () => {
