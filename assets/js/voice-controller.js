@@ -21,12 +21,15 @@ class VoiceController {
     this.requestId = 0;
     this.cycleId = 0;
     this.audioPromise = null;
+    this.audioTrack = null;
+    this.trackEndedHandler = null;
     this.silenceTimeoutMs = 5000;
-    this.fallbackButton.addEventListener('click', () => this.useFallback());
+    this.fallbackButton.addEventListener('click', () => this.useFallback('2'));
     this.micSelect.addEventListener('change', () => this.switchMicrophone());
     navigator.mediaDevices?.addEventListener?.('devicechange', () => this.refreshDevices());
     window.addEventListener?.('pointerdown', () => this.resumeAudioContext(), { passive: true });
     window.addEventListener?.('keydown', () => this.resumeAudioContext());
+    window.addEventListener?.('keydown', (event) => this.handleFallbackKey(event), true);
   }
 
   request(config) {
@@ -78,6 +81,7 @@ class VoiceController {
       const AudioContextClass = window.AudioContext || window.webkitAudioContext;
       if (!AudioContextClass) throw new Error('AudioContextUnavailable');
       if (!this.audioContext || this.audioContext.state === 'closed') this.audioContext = new AudioContextClass();
+      if (this.stream) this.releaseAudioStream();
       this.resumeAudioContext();
       const selectedDeviceId = this.micSelect.value;
       const audioOptions = (deviceId = '') => ({
@@ -86,18 +90,19 @@ class VoiceController {
         ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
       });
       try {
-        this.stream = await navigator.mediaDevices.getUserMedia({ audio: audioOptions(selectedDeviceId) });
+        this.stream = await this.getUserMediaWithTimeout({ audio: audioOptions(selectedDeviceId) });
       } catch (error) {
         const selectedDeviceMissing = selectedDeviceId && ['OverconstrainedError', 'NotFoundError'].includes(error?.name);
         if (!selectedDeviceMissing) throw error;
         this.micSelect.value = '';
-        this.stream = await navigator.mediaDevices.getUserMedia({ audio: audioOptions() });
+        this.stream = await this.getUserMediaWithTimeout({ audio: audioOptions() });
       }
       this.source?.disconnect?.();
       this.source = this.audioContext.createMediaStreamSource(this.stream);
       this.analyser = this.audioContext.createAnalyser();
       this.analyser.fftSize = 1024;
       this.source.connect(this.analyser);
+      this.watchAudioTrack(this.stream.getAudioTracks?.()[0]);
       this.resumeAudioContext();
       void this.refreshDevices().catch(() => {});
     })();
@@ -117,6 +122,67 @@ class VoiceController {
     } catch (error) {
       // 음성 인식은 계속 사용하고, 다음 사용자 입력 때 음량 분석을 다시 활성화합니다.
     }
+  }
+
+  getUserMediaWithTimeout(constraints, timeoutMs = 6000) {
+    const mediaPromise = navigator.mediaDevices.getUserMedia(constraints);
+    let timeoutId;
+    const timeoutPromise = new Promise((_, reject) => {
+      timeoutId = window.setTimeout(() => {
+        const error = new Error('Microphone connection timed out');
+        error.name = 'MicrophoneTimeoutError';
+        reject(error);
+      }, timeoutMs);
+    });
+    return Promise.race([mediaPromise, timeoutPromise]).then(
+      (stream) => {
+        clearTimeout(timeoutId);
+        return stream;
+      },
+      (error) => {
+        clearTimeout(timeoutId);
+        if (error?.name === 'MicrophoneTimeoutError') {
+          mediaPromise.then((stream) => stream.getTracks().forEach((track) => track.stop())).catch(() => {});
+        }
+        throw error;
+      },
+    );
+  }
+
+  watchAudioTrack(track) {
+    this.detachAudioTrackWatcher();
+    if (!track) return;
+    this.audioTrack = track;
+    this.trackEndedHandler = () => {
+      if (track !== this.audioTrack) return;
+      const request = this.activeRequest;
+      this.detachAudioTrackWatcher();
+      this.stopRecognitionCycle();
+      this.releaseAudioStream();
+      if (request === this.activeRequest) {
+        this.hint.textContent = '마이크 연결이 끊겨 자동으로 다시 연결합니다. 같은 대사를 유지합니다.';
+        this.setStatus('ready', '마이크 자동 재연결 중');
+        this.micLabel.textContent = '마이크 자동 재연결 중';
+        this.scheduleRestart(request, 700);
+      }
+    };
+    track.addEventListener?.('ended', this.trackEndedHandler, { once: true });
+  }
+
+  detachAudioTrackWatcher() {
+    this.audioTrack?.removeEventListener?.('ended', this.trackEndedHandler);
+    this.audioTrack = null;
+    this.trackEndedHandler = null;
+  }
+
+  releaseAudioStream() {
+    this.detachAudioTrackWatcher();
+    this.stream?.getTracks?.().forEach((track) => track.stop());
+    this.stream = null;
+    this.source?.disconnect?.();
+    this.source = null;
+    this.analyser?.disconnect?.();
+    this.analyser = null;
   }
 
   async refreshDevices() {
@@ -144,12 +210,7 @@ class VoiceController {
     const request = this.activeRequest;
     clearTimeout(this.restartTimer);
     this.stopRecognitionCycle();
-    this.stream?.getTracks().forEach((track) => track.stop());
-    this.stream = null;
-    this.source?.disconnect?.();
-    this.source = null;
-    this.analyser?.disconnect?.();
-    this.analyser = null;
+    this.releaseAudioStream();
     this.micLabel.textContent = '마이크 변경 중';
     this.setStatus('listening', '선택한 마이크에 연결하는 중');
     try {
@@ -162,6 +223,8 @@ class VoiceController {
       this.setStatus('error', '마이크 변경 실패');
       this.hint.textContent = '선택한 마이크를 열 수 없습니다. 브라우저 권한을 확인하세요.';
       this.micLabel.textContent = '마이크 연결 확인 필요';
+      const permissionBlocked = ['NotAllowedError', 'SecurityError'].includes(error?.name);
+      if (!permissionBlocked && request === this.activeRequest) this.scheduleRestart(request, 1500);
     }
   }
 
@@ -173,16 +236,22 @@ class VoiceController {
       this.micLabel.textContent = '마이크 권한 확인 필요';
       return;
     }
-    if (['NotFoundError', 'audio-capture'].includes(name)) {
+    if (name === 'NotFoundError') {
       this.hint.textContent = '사용 가능한 마이크를 찾지 못했습니다. 마이크 연결 상태를 확인하세요.';
       this.setStatus('error', '마이크 장치 없음');
       this.micLabel.textContent = '마이크 연결 필요';
       return;
     }
-    if (name === 'NotReadableError') {
-      this.hint.textContent = '다른 프로그램이 마이크를 사용 중일 수 있습니다. 해당 프로그램을 닫고 새로고침하세요.';
+    if (['NotReadableError', 'AbortError', 'audio-capture'].includes(name)) {
+      this.hint.textContent = '다른 프로그램이 마이크를 사용 중일 수 있습니다. 자동으로 다시 연결합니다. 키보드 1·2·3 또는 Enter로도 진행할 수 있습니다.';
       this.setStatus('error', '마이크를 열 수 없음');
-      this.micLabel.textContent = '마이크 연결 확인 필요';
+      this.micLabel.textContent = '마이크 자동 재연결 대기';
+      return;
+    }
+    if (name === 'MicrophoneTimeoutError') {
+      this.hint.textContent = '마이크 연결 응답이 늦어 자동으로 다시 연결합니다. 키보드 1·2·3 또는 Enter로도 진행할 수 있습니다.';
+      this.setStatus('error', '마이크 연결 지연');
+      this.micLabel.textContent = '마이크 자동 재연결 대기';
       return;
     }
     this.hint.textContent = '마이크 연결을 확인한 뒤 새로고침하거나 키보드 테스트를 이용하세요.';
@@ -199,10 +268,13 @@ class VoiceController {
     this.recording = false;
     clearTimeout(this.maxTimer);
     clearTimeout(this.silenceTimer);
+    clearTimeout(this.recognitionStartTimer);
+    clearTimeout(this.cycleWatchdogTimer);
     cancelAnimationFrame(this.volumeFrame);
     const recognition = this.recognition;
     this.recognition = null;
     if (recognition) {
+      recognition.onstart = null;
       recognition.onresult = null;
       recognition.onerror = null;
       recognition.onend = null;
@@ -225,6 +297,19 @@ class VoiceController {
     }, delay);
   }
 
+  startRecognitionWithActiveTrack(recognition) {
+    const track = this.stream?.getAudioTracks?.()[0];
+    if (track?.readyState === 'live') {
+      try {
+        recognition.start(track);
+        return;
+      } catch (error) {
+        if (!['TypeError', 'NotSupportedError'].includes(error?.name)) throw error;
+      }
+    }
+    recognition.start();
+  }
+
   async startRecording(request = this.activeRequest) {
     if (!request || request !== this.activeRequest || this.recording || request.starting) return;
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -242,7 +327,11 @@ class VoiceController {
       await this.ensureAudio();
     } catch (error) {
       request.starting = false;
-      if (request === this.activeRequest) this.showMicrophoneError(error);
+      if (request === this.activeRequest) {
+        this.showMicrophoneError(error);
+        const permissionBlocked = ['NotAllowedError', 'SecurityError'].includes(error?.name);
+        if (!permissionBlocked) this.scheduleRestart(request, 1500);
+      }
       return;
     }
     request.starting = false;
@@ -265,16 +354,30 @@ class VoiceController {
 
     const recognition = new SpeechRecognition();
     this.recognition = recognition;
+    let recognitionStarted = false;
     recognition.lang = 'ko-KR';
     recognition.interimResults = true;
     recognition.continuous = false;
     recognition.maxAlternatives = 3;
-    recognition.onspeechstart = () => this.markVoiceDetected('목소리 입력 확인됨', request, cycleId, recognition);
+    recognition.onstart = () => {
+      if (!this.isCurrentCycle(request, cycleId, recognition)) return;
+      recognitionStarted = true;
+      clearTimeout(this.recognitionStartTimer);
+      this.micLabel.textContent = '마이크 자동 듣기 중';
+      this.setStatus('listening', '자동 듣는 중 — 대사를 말하세요');
+    };
+    recognition.onspeechstart = () => {
+      recognitionStarted = true;
+      clearTimeout(this.recognitionStartTimer);
+      this.markVoiceDetected('목소리 입력 확인됨', request, cycleId, recognition);
+    };
     recognition.onspeechend = () => {
       if (this.isCurrentCycle(request, cycleId, recognition)) this.speechEndedAt = performance.now();
     };
     recognition.onresult = (event) => {
       if (!this.isCurrentCycle(request, cycleId, recognition)) return;
+      recognitionStarted = true;
+      clearTimeout(this.recognitionStartTimer);
       this.transcript = Array.from(event.results).map((result) => result[0].transcript).join(' ');
       this.hint.textContent = this.transcript || '듣고 있어요…';
       if (this.transcript) this.markVoiceDetected('음성 인식 확인됨', request, cycleId, recognition);
@@ -284,13 +387,38 @@ class VoiceController {
       if (['not-allowed', 'service-not-allowed', 'audio-capture'].includes(event.error)) {
         this.stopRecognitionCycle();
         this.showMicrophoneError(event.error);
+        if (event.error === 'audio-capture' && request === this.activeRequest) {
+          this.releaseAudioStream();
+          this.scheduleRestart(request, 1500);
+        }
         return;
       }
       this.lastSpeechError = event.error;
     };
     recognition.onend = () => this.finishRecording(request, cycleId, recognition);
+    this.recognitionStartTimer = window.setTimeout(() => {
+      if (!this.isCurrentCycle(request, cycleId, recognition) || recognitionStarted) return;
+      this.stopRecognitionCycle();
+      this.hint.textContent = '음성 인식 시작이 늦어 자동으로 다시 연결합니다. 같은 대사를 말해 주세요.';
+      this.setStatus('ready', '음성 인식 자동 재연결 중');
+      this.micLabel.textContent = '마이크 자동 재연결 중';
+      this.scheduleRestart(request, 700);
+    }, 3500);
+    this.cycleWatchdogTimer = window.setTimeout(() => {
+      if (!this.isCurrentCycle(request, cycleId, recognition)) return;
+      if (this.transcript.trim()) {
+        this.finishRecording(request, cycleId, recognition);
+        return;
+      }
+      this.stopRecognitionCycle();
+      request.silenceStartedAt = null;
+      this.hint.textContent = '음성 인식 응답이 멈춰 자동으로 초기화했습니다. 같은 대사를 다시 듣습니다.';
+      this.setStatus('ready', '음성 인식 자동 초기화 중');
+      this.micLabel.textContent = '마이크 자동 재연결 중';
+      this.scheduleRestart(request, 700);
+    }, 12000);
     try {
-      recognition.start();
+      this.startRecognitionWithActiveTrack(recognition);
     } catch (error) {
       if (!this.isCurrentCycle(request, cycleId, recognition)) return;
       this.stopRecognitionCycle();
@@ -327,7 +455,16 @@ class VoiceController {
     clearTimeout(this.silenceTimer);
     clearTimeout(this.maxTimer);
     this.maxTimer = window.setTimeout(() => {
-      if (this.isCurrentCycle(request, cycleId, recognition)) recognition.stop();
+      if (!this.isCurrentCycle(request, cycleId, recognition)) return;
+      try {
+        recognition.stop();
+      } catch (error) {
+        this.stopRecognitionCycle();
+        this.hint.textContent = '음성 인식을 자동으로 다시 준비하고 있습니다.';
+        this.setStatus('ready', '음성 인식 자동 재연결 중');
+        this.micLabel.textContent = '마이크 자동 재연결 중';
+        this.scheduleRestart(request, 700);
+      }
     }, 6500);
     this.micLabel.textContent = '목소리 감지됨';
     this.setStatus('detected', label);
@@ -400,13 +537,23 @@ class VoiceController {
     this.lastSpeechError = null;
   }
 
-  useFallback() {
+  handleFallbackKey(event) {
+    if (!this.activeRequest || event.repeat) return;
+    const answer = event.key === 'Enter' ? '2' : event.key;
+    if (!['1', '2', '3'].includes(answer)) return;
+    const tagName = event.target?.tagName;
+    if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tagName)) return;
+    if (event.key === 'Enter' && tagName === 'BUTTON' && event.target !== this.fallbackButton) return;
+    event.preventDefault();
+    this.useFallback(answer);
+  }
+
+  useFallback(answer) {
     const request = this.activeRequest;
     if (!request) return;
-    const answer = window.prompt('테스트할 연기 강도를 입력하세요.\n1: 약하게  2: 상황에 맞게  3: 과하게', '2');
-    if (!['1', '2', '3'].includes(answer)) return;
+    const selectedAnswer = ['1', '2', '3'].includes(answer) ? answer : '2';
     const target = request.config.profile?.targetVolume ?? .5;
-    const volume = answer === '1' ? Math.max(.02, target - .48) : answer === '3' ? Math.min(1, target + .5) : target;
+    const volume = selectedAnswer === '1' ? Math.max(.02, target - .48) : selectedAnswer === '3' ? Math.min(1, target + .5) : target;
     const timing = this.startTiming ?? request.config.timingProvider?.() ?? 1;
     if (!request.started) {
       request.started = true;

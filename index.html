@@ -6,8 +6,8 @@
     <meta name="theme-color" content="#111827" />
     <title>목소리 한 판!</title>
       <link rel="stylesheet" href="./assets/css/base.css">
-    <link rel="stylesheet" href="./assets/css/voice-ui.css?v=20260902-voice-fix">
-    <link rel="stylesheet" href="./assets/css/responsive.css?v=20260902-voice-fix">
+    <link rel="stylesheet" href="./assets/css/voice-ui.css?v=20260902-input-fix">
+    <link rel="stylesheet" href="./assets/css/responsive.css?v=20260902-input-fix">
   </head>
   <body>
     <main class="app-shell">
@@ -58,7 +58,7 @@
             <span class="mic-dot"></span>
             <span id="mic-label">마이크 자동 듣기 준비</span>
           </div>
-          <button id="fallback-button" class="fallback-button" type="button">키보드 테스트</button>
+          <button id="fallback-button" class="fallback-button" type="button">키보드 진행(적절) · 숫자 1·2·3 / Enter</button>
         </section>
 
         <section id="mic-test-modal" class="mic-test-modal is-hidden" aria-label="마이크 테스트">
@@ -110,7 +110,7 @@
         <ul>
           <li>로비의 마이크 테스트에서 입력 장치와 음성 인식을 먼저 확인할 수 있습니다.</li>
           <li>음성 인식은 Chrome 또는 Edge에서 가장 안정적입니다.</li>
-          <li>마이크 권한이 없으면 키보드 테스트 버튼으로 판정을 선택할 수 있습니다.</li>
+          <li>마이크가 작동하지 않아도 숫자키 1·2·3으로 약하게·적절하게·과하게 판정하거나 Enter로 바로 진행할 수 있습니다.</li>
           <li>단순히 크게 말하는 것보다 타이밍과 상황에 맞는 톤이 중요합니다.</li>
         </ul>
         <button id="close-help" class="primary-button" type="button">확인</button>
@@ -118,8 +118,8 @@
     </main>
     <script defer src="./assets/vendor/phaser.min.js"></script>
     <script defer src="./assets/js/voice-evaluator.js"></script>
-    <script defer src="./assets/js/voice-controller.js?v=20260902-voice-fix"></script>
-    <script defer src="./assets/js/mic-test-controller.js?v=20260902-voice-fix"></script>
-    <script defer src="./assets/js/game.js?v=20260902-voice-fix"></script>
+    <script defer src="./assets/js/voice-controller.js?v=20260902-input-fix"></script>
+    <script defer src="./assets/js/mic-test-controller.js?v=20260902-input-fix"></script>
+    <script defer src="./assets/js/game.js?v=20260902-input-fix"></script>
   </body>
 </html>

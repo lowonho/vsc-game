@@ -56,7 +56,7 @@ class BaseScene extends Phaser.Scene {
     const line = this.add.text(640, 201, `“${config.expected}”`, {
       ...textStyle, fontSize: 28, fontStyle: 'bold', align: 'center', wordWrap: { width: 850 },
     }).setOrigin(.5).setDepth(901);
-    const hint = this.add.text(640, 239, `마이크가 자동으로 듣고 있습니다 · ${config.hint ?? ''}`, {
+    const hint = this.add.text(640, 239, `마이크 자동 듣기 · 키보드 1 약하게 / 2 적절 / 3 과하게 / Enter 진행 · ${config.hint ?? ''}`, {
       ...textStyle, fontSize: 13, color: '#a5f3fc', align: 'center', wordWrap: { width: 850 },
     }).setOrigin(.5).setDepth(901);
     this.phraseGuide = [panel, context, line, hint];
@@ -190,7 +190,8 @@ class TaxiScene extends BaseScene {
     this.taxi = this.makeTaxi(1360, 520);
     this.taxiActive = true;
     this.stageScores = [];
-    this.firstBeat();
+    // create()가 끝나 장면이 실제 실행 상태가 된 다음 입력 구간을 시작합니다.
+    this.time.delayedCall(0, () => this.firstBeat());
   }
 
   makeTaxi(x, y) {
@@ -266,7 +267,8 @@ class CourtScene extends BaseScene {
       this.statementIndex = Math.min(this.statementIndex + 1, this.statements.length - 1);
       this.showStatement();
     }});
-    this.firstBeat();
+    // create() 도중에는 scene.isActive()가 아직 false라 다음 틱에 시작해야 합니다.
+    this.time.delayedCall(0, () => this.firstBeat());
   }
 
   showStatement() {
@@ -332,7 +334,8 @@ class RamenScene extends BaseScene {
     this.meterBar = this.add.rectangle(394, 610, 8, 16, palette.green).setOrigin(0, .5);
     this.add.text(385, 642, '안전', { ...textStyle, fontSize: 13, color: '#86efac' });
     this.add.text(895, 642, '엄마가 깸', { ...textStyle, fontSize: 13, color: '#fca5a5' }).setOrigin(1, 0);
-    this.firstBeat();
+    // 대사·마이크·키보드 입력이 활성 장면에서 등록되도록 한 틱 늦춥니다.
+    this.time.delayedCall(0, () => this.firstBeat());
   }
 
   setNoise(value) {
