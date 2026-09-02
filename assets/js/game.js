@@ -56,7 +56,7 @@ class BaseScene extends Phaser.Scene {
     const line = this.add.text(640, 201, `“${config.expected}”`, {
       ...textStyle, fontSize: 28, fontStyle: 'bold', align: 'center', wordWrap: { width: 850 },
     }).setOrigin(.5).setDepth(901);
-    const hint = this.add.text(640, 239, `화면 아래의 ‘마이크 켜고 말하기’를 누르세요 · ${config.hint ?? ''}`, {
+    const hint = this.add.text(640, 239, `마이크가 자동으로 듣고 있습니다 · ${config.hint ?? ''}`, {
       ...textStyle, fontSize: 13, color: '#a5f3fc', align: 'center', wordWrap: { width: 850 },
     }).setOrigin(.5).setDepth(901);
     this.phraseGuide = [panel, context, line, hint];
@@ -76,12 +76,12 @@ class BaseScene extends Phaser.Scene {
         return evaluateVoice({ ...raw, expected: config.expected, profile: config.profile });
       }
       if (raw.status === 'no-speech') {
-        toast('마이크가 대사를 듣지 못했어요. 게임 실패가 아니니 다시 말해 주세요.');
+        toast('마이크가 대사를 듣지 못했어요. 점수 없이 자동으로 다시 듣습니다.');
         await new Promise((resolve) => setTimeout(resolve, 450));
         continue;
       }
       if (raw.status === 'speech-error') {
-        toast('음성 인식 연결에 실패했어요. 다시 시도하거나 키보드 테스트를 이용하세요.');
+        toast('음성 인식 연결에 실패했어요. 자동으로 다시 연결하거나 키보드 테스트를 이용하세요.');
         await new Promise((resolve) => setTimeout(resolve, 450));
         continue;
       }

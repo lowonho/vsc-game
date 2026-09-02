@@ -4,7 +4,7 @@
   .voice-panel { grid-template-columns: 1fr auto; }
   .voice-monitor { grid-column: 1 / -1; grid-row: 2; }
   .fallback-button { grid-column: 1; }
-  .mic-button { grid-column: 2; grid-row: 1; }
+  .mic-auto-status { grid-column: 2; grid-row: 1; }
 }
 
 @media (max-width: 560px) {
@@ -15,7 +15,7 @@
   .stage-prompt-heading { flex-direction: column; gap: 2px; }
   #stage-prompt-hint { display: none; }
   .voice-panel { grid-template-columns: 1fr; }
-  .mic-button, .fallback-button, .voice-monitor { grid-column: 1; grid-row: auto; }
+  .mic-auto-status, .fallback-button, .voice-monitor { grid-column: 1; grid-row: auto; }
   #voice-line { white-space: normal; }
   .mic-test-modal { padding: 8px; }
   .mic-test-card { padding: 20px 16px; max-height: calc(100% - 16px); overflow: auto; }
