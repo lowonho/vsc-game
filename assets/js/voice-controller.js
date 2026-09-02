@@ -25,12 +25,13 @@ class VoiceController {
     this.fallbackButton.addEventListener('click', () => this.useFallback());
     this.micSelect.addEventListener('change', () => this.switchMicrophone());
     navigator.mediaDevices?.addEventListener?.('devicechange', () => this.refreshDevices());
+    window.addEventListener?.('pointerdown', () => this.resumeAudioContext(), { passive: true });
+    window.addEventListener?.('keydown', () => this.resumeAudioContext());
   }
 
   request(config) {
     this.cancel('replaced');
     this.enterStage(config);
-    this.panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     return new Promise((resolve) => {
       const request = { config, resolve, id: ++this.requestId, starting: false, started: false };
       this.activeRequest = request;
@@ -67,32 +68,54 @@ class VoiceController {
 
   async ensureAudio() {
     const hasLiveTrack = this.stream?.getAudioTracks?.().some((track) => track.readyState === 'live');
-    if (hasLiveTrack) return;
+    if (hasLiveTrack && this.analyser) {
+      this.resumeAudioContext();
+      return;
+    }
     if (this.audioPromise) return this.audioPromise;
 
     this.audioPromise = (async () => {
-      this.audioContext ??= new AudioContext();
-      if (this.audioContext.state === 'suspended') await this.audioContext.resume();
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextClass) throw new Error('AudioContextUnavailable');
+      if (!this.audioContext || this.audioContext.state === 'closed') this.audioContext = new AudioContextClass();
+      this.resumeAudioContext();
       const selectedDeviceId = this.micSelect.value;
-      this.stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          ...(selectedDeviceId ? { deviceId: { exact: selectedDeviceId } } : {}),
-        },
+      const audioOptions = (deviceId = '') => ({
+        echoCancellation: true,
+        noiseSuppression: true,
+        ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
       });
+      try {
+        this.stream = await navigator.mediaDevices.getUserMedia({ audio: audioOptions(selectedDeviceId) });
+      } catch (error) {
+        const selectedDeviceMissing = selectedDeviceId && ['OverconstrainedError', 'NotFoundError'].includes(error?.name);
+        if (!selectedDeviceMissing) throw error;
+        this.micSelect.value = '';
+        this.stream = await navigator.mediaDevices.getUserMedia({ audio: audioOptions() });
+      }
       this.source?.disconnect?.();
       this.source = this.audioContext.createMediaStreamSource(this.stream);
       this.analyser = this.audioContext.createAnalyser();
       this.analyser.fftSize = 1024;
       this.source.connect(this.analyser);
-      await this.refreshDevices();
+      this.resumeAudioContext();
+      void this.refreshDevices().catch(() => {});
     })();
 
     try {
       await this.audioPromise;
     } finally {
       this.audioPromise = null;
+    }
+  }
+
+  resumeAudioContext() {
+    if (this.audioContext?.state !== 'suspended') return;
+    try {
+      const resumeResult = this.audioContext.resume();
+      resumeResult?.catch?.(() => {});
+    } catch (error) {
+      // 음성 인식은 계속 사용하고, 다음 사용자 입력 때 음량 분석을 다시 활성화합니다.
     }
   }
 

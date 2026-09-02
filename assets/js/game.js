@@ -68,9 +68,10 @@ class BaseScene extends Phaser.Scene {
   }
 
   async capture(config) {
-    this.showPhraseGuide(config);
     while (this.scene.isActive()) {
-      const raw = await voice.request(config);
+      const voiceResult = voice.request(config);
+      this.showPhraseGuide(config);
+      const raw = await voiceResult;
       if (raw.status === 'ok') {
         this.clearPhraseGuide();
         return evaluateVoice({ ...raw, expected: config.expected, profile: config.profile });
