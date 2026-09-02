@@ -45,21 +45,66 @@ class BaseScene extends Phaser.Scene {
     return this.add.container(0, 0, [bg, copy]);
   }
 
+  getSpeakingMetrics(config) {
+    const profile = config.profile ?? {};
+    const weights = profile.weights ?? {};
+    const targetVolume = Number.isFinite(profile.targetVolume) ? profile.targetVolume : .5;
+    const targetCps = Number.isFinite(profile.targetCps) ? profile.targetCps : 4.5;
+    const volume = targetVolume <= .2 ? '아주 작게'
+      : targetVolume <= .4 ? '작게'
+        : targetVolume <= .55 ? '보통 크기로'
+          : targetVolume <= .74 ? '크게' : '아주 크게';
+    const speed = targetCps <= 3.9 ? '천천히'
+      : targetCps <= 4.5 ? '보통 속도로'
+        : targetCps <= 5.1 ? '조금 빠르게' : '빠르게';
+    return [
+      { label: '정확도', weight: weights.accuracy ?? .35, value: '제시 문장 그대로', color: 0x22c55e, textColor: '#86efac' },
+      { label: '음량', weight: weights.volume ?? .3, value: volume, color: 0x22d3ee, textColor: '#67e8f9' },
+      { label: '속도', weight: weights.speed ?? .15, value: speed, color: 0x8b5cf6, textColor: '#c4b5fd' },
+      {
+        label: '타이밍', weight: weights.timing ?? .2,
+        value: config.timingProvider ? config.kicker : '대사가 뜨면 바로',
+        color: 0xf59e0b, textColor: '#fde68a',
+      },
+    ];
+  }
+
   showPhraseGuide(config) {
     this.clearPhraseGuide();
-    const panel = this.add.rectangle(640, 205, 920, 112, 0x020617, .96)
+    const panel = this.add.rectangle(640, 235, 920, 184, 0x020617, .97)
       .setStrokeStyle(3, palette.amber, .92)
       .setDepth(900);
-    const context = this.add.text(640, 166, `지금 말할 대사 · ${config.kicker ?? '상황에 맞게 연기'}`, {
+    const context = this.add.text(640, 158, `지금 말할 대사 · ${config.kicker ?? '상황에 맞게 연기'}`, {
       ...textStyle, fontSize: 14, fontStyle: 'bold', color: '#fde68a',
     }).setOrigin(.5).setDepth(901);
-    const line = this.add.text(640, 201, `“${config.expected}”`, {
-      ...textStyle, fontSize: 28, fontStyle: 'bold', align: 'center', wordWrap: { width: 850 },
+    const line = this.add.text(640, 191, `“${config.expected}”`, {
+      ...textStyle, fontSize: 27, fontStyle: 'bold', align: 'center', wordWrap: { width: 850 },
     }).setOrigin(.5).setDepth(901);
-    const hint = this.add.text(640, 239, `마이크 자동 듣기 · 키보드 1 약하게 / 2 적절 / 3 과하게 / Enter 진행 · ${config.hint ?? ''}`, {
-      ...textStyle, fontSize: 13, color: '#a5f3fc', align: 'center', wordWrap: { width: 850 },
+    const hint = this.add.text(640, 226, `연기 지시 · ${config.hint ?? '상황에 맞게 또렷하게 말하세요.'}`, {
+      ...textStyle, fontSize: 13, color: '#cbd5e1', align: 'center', wordWrap: { width: 850 },
     }).setOrigin(.5).setDepth(901);
-    this.phraseGuide = [panel, context, line, hint];
+    const micHint = this.add.text(640, 315, '● 마이크 자동 듣기 · 5초 안에 말하기 · 키보드 1 약하게 / 2 적절 / 3 과하게 / Enter 진행', {
+      ...textStyle, fontSize: 11, color: '#a5f3fc', align: 'center',
+    }).setOrigin(.5).setDepth(901);
+    const metrics = this.getSpeakingMetrics(config);
+    const maxWeight = Math.max(...metrics.map((metric) => metric.weight));
+    const guideItems = [panel, context, line, hint, micHint];
+    metrics.forEach((metric, index) => {
+      const x = 340 + index * 200;
+      const primary = metric.weight === maxWeight;
+      const box = this.add.rectangle(x, 276, 188, 52, 0x0f172a, .98)
+        .setStrokeStyle(primary ? 2 : 1, primary ? palette.amber : metric.color, primary ? .95 : .48)
+        .setDepth(901);
+      const label = this.add.text(x, 263, `${metric.label} ${Math.round(metric.weight * 100)}%${primary ? ' · 중요' : ''}`, {
+        ...textStyle, fontSize: 11, fontStyle: 'bold', color: primary ? '#fde68a' : '#94a3b8',
+      }).setOrigin(.5).setDepth(902);
+      const value = this.add.text(x, 284, metric.value, {
+        ...textStyle, fontSize: 13, fontStyle: 'bold', color: metric.textColor,
+        align: 'center', wordWrap: { width: 174 },
+      }).setOrigin(.5).setDepth(902);
+      guideItems.push(box, label, value);
+    });
+    this.phraseGuide = guideItems;
   }
 
   clearPhraseGuide() {
@@ -140,6 +185,21 @@ class BaseScene extends Phaser.Scene {
 
 class TitleScene extends BaseScene {
   constructor() { super('Title'); }
+
+  startWithMicGuide(scene) {
+    const startScene = () => {
+      voice.prepareStageAudio();
+      this.scene.start(scene);
+    };
+    if (micTest.shouldGuideBeforeGame()) {
+      voice.pauseAudioForMicTest();
+      micTest.open({ onboarding: true, onContinue: startScene });
+      toast('게임 시작 전에 마이크 연결과 입력을 먼저 확인해 주세요.');
+      return;
+    }
+    startScene();
+  }
+
   create() {
     voice.leaveStage();
     lobbyButton.classList.add('is-hidden');
@@ -149,7 +209,11 @@ class TitleScene extends BaseScene {
     glow.fillStyle(0x22d3ee, .08).fillCircle(130, 620, 310);
     this.add.text(54, 62, 'PHASER 3 · VOICE ACTING GAME', { ...textStyle, fontSize: 15, fontStyle: 'bold', color: '#67e8f9' });
     this.add.text(54, 104, '상황을 보고,\n목소리로 해결하세요.', { ...textStyle, fontSize: 56, fontStyle: 'bold', lineSpacing: 8 });
-    this.add.text(58, 252, '정해진 대사를 언제, 얼마나 크게, 어떤 감정으로 말할지 판단하는\n3스테이지 테스트 버전입니다.', { ...textStyle, fontSize: 19, color: '#cbd5e1', lineSpacing: 9 });
+    this.add.text(58, 252, '정해진 대사를 상황에 맞춰 정확도, 음량, 속도, 타이밍으로 판단하는\n3스테이지 테스트 버전입니다.', { ...textStyle, fontSize: 19, color: '#cbd5e1', lineSpacing: 9 });
+    this.add.rectangle(640, 324, 920, 34, 0x082f49, .9).setStrokeStyle(1, palette.cyan, .5);
+    this.add.text(640, 324, '처음이라면  ① 마이크 연결·테스트  →  ② 권한 허용·입력 확인  →  ③ 게임 시작', {
+      ...textStyle, fontSize: 14, fontStyle: 'bold', color: '#a5f3fc',
+    }).setOrigin(.5);
 
     const cards = [
       ['01', '할증 전 택시 잡기', '거리 + 다급함', 'Taxi'],
@@ -161,10 +225,7 @@ class TitleScene extends BaseScene {
       const bg = this.add.rectangle(x, 447, 360, 210, 0x111827, .94).setStrokeStyle(1, 0xffffff, .11).setInteractive({ useHandCursor: true });
       bg.on('pointerover', () => bg.setStrokeStyle(2, palette.cyan, .8));
       bg.on('pointerout', () => bg.setStrokeStyle(1, 0xffffff, .11));
-      bg.on('pointerdown', () => {
-        voice.prepareStageAudio();
-        this.scene.start(scene);
-      });
+      bg.on('pointerdown', () => this.startWithMicGuide(scene));
       this.add.text(x - 145, 370, number, { ...textStyle, fontSize: 16, fontStyle: 'bold', color: '#67e8f9' });
       this.add.text(x - 145, 416, title, { ...textStyle, fontSize: 24, fontStyle: 'bold' });
       this.add.text(x - 145, 459, tag, { ...textStyle, fontSize: 15, color: '#94a3b8' });
@@ -174,14 +235,11 @@ class TitleScene extends BaseScene {
       ? '⚠ index.html을 직접 열지 말고 GitHub Pages 주소로 접속하세요.'
       : '✓ 웹 주소로 실행 중 · 허용한 마이크 권한을 같은 주소에서 다시 사용합니다.';
     this.add.text(640, 612, launchHint, { ...textStyle, fontSize: 14, fontStyle: 'bold', color: location.protocol === 'file:' ? '#fcd34d' : '#86efac' }).setOrigin(.5);
-    this.button(500, 665, '마이크 테스트', () => {
+    this.button(500, 665, '1. 마이크 연결·테스트', () => {
       voice.pauseAudioForMicTest();
       micTest.open();
     }, 240);
-    this.button(780, 665, '처음부터 플레이', () => {
-      voice.prepareStageAudio();
-      this.scene.start('Taxi');
-    }, 240);
+    this.button(780, 665, '2. 게임 시작', () => this.startWithMicGuide('Taxi'), 240);
   }
 }
 

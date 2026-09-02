@@ -1,8 +1,11 @@
 class MicTestController {
   constructor() {
     this.modal = document.querySelector('#mic-test-modal');
+    this.title = document.querySelector('#mic-test-title');
+    this.description = document.querySelector('#mic-test-description');
     this.startButton = document.querySelector('#mic-test-start');
-    this.closeButtons = [document.querySelector('#mic-test-close'), document.querySelector('#mic-test-close-x')];
+    this.closeButton = document.querySelector('#mic-test-close');
+    this.closeX = document.querySelector('#mic-test-close-x');
     this.deviceSelect = document.querySelector('#test-device-select');
     this.statusDot = document.querySelector('#test-status-dot');
     this.statusText = document.querySelector('#test-status-text');
@@ -24,28 +27,58 @@ class MicTestController {
     this.recognitionUsesTrack = false;
     this.recognitionStartFailures = 0;
     this.connectionFailures = 0;
+    this.inputVerified = false;
+    this.gamePromptHandled = false;
+    this.onboarding = false;
+    this.continueCallback = null;
 
     this.startButton.addEventListener('click', () => this.toggle());
-    this.closeButtons.forEach((button) => button.addEventListener('click', () => this.close()));
+    this.closeButton.addEventListener('click', () => this.confirmOrClose());
+    this.closeX.addEventListener('click', () => this.close());
     this.deviceSelect.addEventListener('change', () => this.changeDevice());
     navigator.mediaDevices?.addEventListener?.('devicechange', () => this.refreshDevices());
     window.addEventListener?.('pointerdown', () => this.resumeAudioContext(), { passive: true });
     window.addEventListener?.('keydown', () => this.resumeAudioContext());
   }
 
-  open() {
+  open(options = {}) {
+    const { onboarding = false, onContinue = null } = options;
+    this.onboarding = onboarding;
+    this.continueCallback = typeof onContinue === 'function' ? onContinue : null;
     this.connectionFailures = 0;
     this.modal.classList.remove('is-hidden');
+    this.title.textContent = this.onboarding ? '게임 시작 전 마이크 연결' : '게임 시작 전 마이크 테스트';
+    this.description.textContent = this.onboarding
+      ? '마이크 권한 창이 나오면 허용해 주세요. 자동 연결 후 게이지가 움직이고 인식 문장이 보이면 게임을 시작하면 됩니다. 테스트를 건너뛰어도 키보드로 진행할 수 있습니다.'
+      : '게임에 사용할 마이크를 선택하고, 실제 목소리와 음성 인식이 정상적으로 들어오는지 확인하세요. 5초 동안 입력이 없으면 자동으로 초기화해 다시 듣습니다.';
+    this.closeButton.textContent = this.onboarding
+      ? (this.inputVerified ? '입력 확인 완료 · 게임 시작' : '테스트 건너뛰고 게임 시작')
+      : '로비로 돌아가기';
+    this.startButton.textContent = '마이크 연결하고 테스트';
     this.setStatus('ready', '테스트 대기 중');
     this.transcript.textContent = '아직 인식된 목소리가 없습니다.';
     this.levelText.textContent = '입력 레벨 0%';
     this.meterFill.style.width = '0%';
     this.refreshDevices(false);
+    if (this.onboarding) void this.start();
   }
 
   close() {
     this.stop(false);
     this.modal.classList.add('is-hidden');
+    this.onboarding = false;
+    this.continueCallback = null;
+  }
+
+  shouldGuideBeforeGame() {
+    return !this.inputVerified && !this.gamePromptHandled;
+  }
+
+  confirmOrClose() {
+    const callback = this.onboarding ? this.continueCallback : null;
+    if (this.onboarding) this.gamePromptHandled = true;
+    this.close();
+    callback?.();
   }
 
   async toggle() {
@@ -425,6 +458,8 @@ class MicTestController {
 
   markVoiceDetected(runId, cycleId, label) {
     if (!this.isCurrentCycle(runId, cycleId) || !this.testCycleActive) return;
+    this.inputVerified = true;
+    if (this.onboarding) this.closeButton.textContent = '입력 확인 완료 · 게임 시작';
     if (!this.voiceDetected) {
       this.voiceDetected = true;
       clearTimeout(this.silenceTimer);

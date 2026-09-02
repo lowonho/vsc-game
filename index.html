@@ -6,8 +6,8 @@
     <meta name="theme-color" content="#111827" />
     <title>목소리 한 판!</title>
       <link rel="stylesheet" href="./assets/css/base.css">
-    <link rel="stylesheet" href="./assets/css/voice-ui.css?v=20260902-input-fix-3">
-    <link rel="stylesheet" href="./assets/css/responsive.css?v=20260902-input-fix-3">
+    <link rel="stylesheet" href="./assets/css/voice-ui.css?v=20260902-guide-fix">
+    <link rel="stylesheet" href="./assets/css/responsive.css?v=20260902-guide-fix">
   </head>
   <body>
     <main class="app-shell">
@@ -65,8 +65,8 @@
           <div class="mic-test-card">
             <button id="mic-test-close-x" class="mic-test-close-x" type="button" aria-label="닫기">×</button>
             <span class="eyebrow">MICROPHONE CHECK</span>
-            <h2>게임 시작 전 마이크 테스트</h2>
-            <p class="mic-test-description">게임에 사용할 마이크를 선택하고, 실제 목소리와 음성 인식이 정상적으로 들어오는지 확인하세요. 5초 동안 입력이 없으면 자동으로 초기화해 다시 듣습니다.</p>
+            <h2 id="mic-test-title">게임 시작 전 마이크 테스트</h2>
+            <p id="mic-test-description" class="mic-test-description">게임에 사용할 마이크를 선택하고, 실제 목소리와 음성 인식이 정상적으로 들어오는지 확인하세요. 5초 동안 입력이 없으면 자동으로 초기화해 다시 듣습니다.</p>
 
             <label class="test-device-picker" for="test-device-select">
               <span>사용 마이크</span>
@@ -118,8 +118,8 @@
     </main>
     <script defer src="./assets/vendor/phaser.min.js"></script>
     <script defer src="./assets/js/voice-evaluator.js"></script>
-    <script defer src="./assets/js/voice-controller.js?v=20260902-input-fix-3"></script>
-    <script defer src="./assets/js/mic-test-controller.js?v=20260902-input-fix-3"></script>
-    <script defer src="./assets/js/game.js?v=20260902-input-fix-3"></script>
+    <script defer src="./assets/js/voice-controller.js?v=20260902-guide-fix"></script>
+    <script defer src="./assets/js/mic-test-controller.js?v=20260902-guide-fix"></script>
+    <script defer src="./assets/js/game.js?v=20260902-guide-fix"></script>
   </body>
 </html>
